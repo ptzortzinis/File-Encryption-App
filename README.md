@@ -1,80 +1,28 @@
 # File-Encryption-App
+This is a Python application for file encryption, decryption, and password management. It supports both authenticated encryption using AES-GCM and integrity-only protection using HMAC-SHA256.
 
-This Python application provides secure file encryption, decryption, and password management using two modes:
-
-AES-GCM (AEAD) for authenticated encryption (confidentiality + integrity)
-
-HMAC-SHA256 for integrity-only protection
-
-Features
-Authenticated Encryption (AES-GCM)
-
-128-bit or 256-bit AES
-
-Nonce-based encryption with optional key rotation
-
-HMAC Integrity Protection
-
-SHA-256 based message authentication
-
-Key Derivation
-
-Uses PBKDF2 with salt and configurable iterations
-
-Key Rotation
-
-Optionally re-encrypts data every time it's accessed
-
-Password Management
-
-Change passwords securely without revealing plaintext
-
-Requirements
-Python 3.6+
-
-cryptography module
-
-Install required library:
-
-bash
-Copy
-Edit
-pip install cryptography
-Usage
-Run the application:
-
-bash
-Copy
-Edit
-python encryptor.py
-You'll be prompted to:
-
-Encrypt a file
-
-Choose AES-GCM or HMAC
-
-Select a security level (low, medium, high)
-
-Optional key rotation for AEAD
-
-Decrypt a file
-
-Automatically detects mode from metadata
-
-Change password
-
-Secure re-encryption with new password
+Encryption Options
+You can choose between two security goals: full encryption with integrity (AES-GCM) or integrity-only protection (HMAC). AES-GCM uses a random nonce for every encryption and supports optional key rotation on file access.
 
 Security Levels
-Level	Key Size	PBKDF2 Iterations
-Low	AES-128	50,000
-Medium	AES-256	100,000
-High	AES-256	200,000
+Three security levels are available: low (AES-128, 50,000 iterations), medium (AES-256, 100,000 iterations), and high (AES-256, 200,000 iterations). These affect the key length and PBKDF2 iteration count.
 
-Output
-When encrypting, the program generates:
+Key Derivation
+Passwords are strengthened using PBKDF2 with SHA-256, salt, and configurable iteration counts. This helps defend against brute-force attacks and ensures key uniqueness.
 
-filename.ext.enc: Encrypted file
+Output Files
+Each encryption generates two files: the encrypted file (filename.ext.enc) and a metadata file (filename.ext.enc.meta) that stores cryptographic parameters like salt, nonce, and iteration count.
 
-filename.ext.enc.meta: JSON metadata containing encryption parameters
+Decryption and Verification
+The app automatically detects the encryption mode from the metadata and decrypts or verifies the file accordingly. AES-GCM decrypts the data, while HMAC checks the file’s integrity.
 
+Password Change
+Passwords can be changed securely without exposing the original data. The file is verified using the old password and re-protected with the new one, including new salt and metadata.
+
+Requirements
+Python 3.6 or newer is required. Install the cryptography library with:
+
+bash
+Copy
+Edit
+pip install cryptography  
