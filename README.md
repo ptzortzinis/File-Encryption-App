@@ -6,7 +6,7 @@ AES-GCM (AEAD) for authenticated encryption (confidentiality + integrity)
 
 HMAC-SHA256 for integrity-only protection
 
-🚀 Features
+Features
 Authenticated Encryption (AES-GCM)
 
 128-bit or 256-bit AES
