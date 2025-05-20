@@ -1,0 +1,290 @@
+import os, json, base64, time
+from cryptography.hazmat.primitives import hashes, hmac as crypto_hmac
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+# Key derivation function using password
+def derive_key(password, salt, iterations, length):
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=length,
+        salt=salt,
+        iterations=iterations,
+    )
+    return kdf.derive(password.encode())
+
+# Authenticated encryption (AES-GCM)
+def encrypt_aead(file_path, password, level, rotate_on_access):
+    salt = os.urandom(16)
+    nonce = os.urandom(12)
+
+    key_len = 16 if level == 'low' else 32
+    iterations = 50000 if level == 'low' else 100000 if level == 'medium' else 200000
+
+    key = derive_key(password, salt, iterations, key_len)
+
+    with open(file_path, 'rb') as f:
+        data = f.read()
+
+    encrypted = AESGCM(key).encrypt(nonce, data, None)
+
+    enc_path = file_path + '.enc'
+    with open(enc_path, 'wb') as f:
+        f.write(encrypted)
+
+    metadata = {
+        'mode': 'AEAD',
+        'salt': base64.b64encode(salt).decode(),
+        'nonce': base64.b64encode(nonce).decode(),
+        'iterations': iterations,
+        'key_length': key_len,
+        'rotate_on_access': rotate_on_access,
+        'rotated_at': int(time.time())
+    }
+    with open(enc_path + '.meta', 'w') as f:
+        json.dump(metadata, f)
+
+    print('File encrypted with AEAD.')
+
+# HMAC protection (integrity only)
+def encrypt_hmac(file_path, password, level):
+    salt = os.urandom(16)
+    key_len = 32
+    iterations = 50000 if level == 'low' else 100000 if level == 'medium' else 200000
+    key = derive_key(password, salt, iterations, key_len)
+
+    with open(file_path, 'rb') as f:
+        data = f.read()
+
+    h = crypto_hmac.HMAC(key, hashes.SHA256())
+    h.update(data)
+    tag = h.finalize()
+
+    enc_path = file_path + '.enc'
+    with open(enc_path, 'wb') as f:
+        f.write(data + tag)
+
+    metadata = {
+        'mode': 'HMAC',
+        'salt': base64.b64encode(salt).decode(),
+        'iterations': iterations,
+        'key_length': key_len
+    }
+    with open(enc_path + '.meta', 'w') as f:
+        json.dump(metadata, f)
+
+    print('File protected with HMAC (integrity only).')
+
+# Decryption for AEAD (AES-GCM)
+def decrypt_aead(enc_path, password):
+    try:
+        with open(enc_path + '.meta', 'r') as f:
+            meta = json.load(f)
+
+        salt = base64.b64decode(meta['salt'])
+        nonce = base64.b64decode(meta['nonce'])
+        key = derive_key(password, salt, meta['iterations'], meta['key_length'])
+
+        with open(enc_path, 'rb') as f:
+            encrypted = f.read()
+
+        decrypted = AESGCM(key).decrypt(nonce, encrypted, None)
+
+        with open(enc_path.replace('.enc', '.decrypted'), 'wb') as f:
+            f.write(decrypted)
+
+        print('File successfully decrypted.')
+
+        if meta.get('rotate_on_access') == "yes":
+            encrypt_aead(enc_path.replace('.enc', '.decrypted'), password,
+                         level="medium", rotate_on_access="yes")
+            os.remove(enc_path.replace('.enc', '.decrypted'))
+
+    except Exception:
+        print('Decryption failed (wrong password).')
+
+# HMAC verification
+def verify_hmac(enc_path, password):
+    try:
+        with open(enc_path + '.meta', 'r') as f:
+            meta = json.load(f)
+
+        salt = base64.b64decode(meta['salt'])
+        iterations = meta['iterations']
+        key_len = meta['key_length']
+        key = derive_key(password, salt, iterations, key_len)
+
+        with open(enc_path, 'rb') as f:
+            content = f.read()
+        data, tag = content[:-32], content[-32:]
+
+        h = crypto_hmac.HMAC(key, hashes.SHA256())
+        h.update(data)
+        h.verify(tag)
+
+        with open(enc_path.replace('.enc', '.verified'), 'wb') as f:
+            f.write(data)
+
+        print("Integrity verification successful.")
+
+    except Exception:
+        print("Verification failed.")
+
+def decrypt_aead_for_reencrypt(enc_path, old_password, new_password, new_level, rotate_on_access):
+    with open(enc_path + ".meta", "r") as f:
+        meta = json.load(f)
+
+    salt = base64.b64decode(meta['salt'])
+    nonce = base64.b64decode(meta['nonce'])
+
+    old_key = derive_key(old_password, salt, meta['iterations'], meta['key_length'])
+
+    with open(enc_path, 'rb') as f:
+        encrypted = f.read()
+
+    decrypted = AESGCM(old_key).decrypt(nonce, encrypted, None)
+
+    os.remove(enc_path)
+    os.remove(enc_path + '.meta')
+
+    encrypt_aead(enc_path.replace('.enc', ''), new_password, new_level, rotate_on_access)
+
+def change_password_hmac(file_path, old_password, new_password, level):
+    with open(file_path + ".meta", "r") as f:
+        meta = json.load(f)
+
+    salt = base64.b64decode(meta['salt'])
+    iterations = meta['iterations']
+    key_len = meta['key_length']
+
+    old_key = derive_key(old_password, salt, iterations, key_len)
+
+    with open(file_path, 'rb') as f:
+        content = f.read()
+    data, tag = content[:-32], content[-32:]
+
+    h = crypto_hmac.HMAC(old_key, hashes.SHA256())
+    h.update(data)
+    h.verify(tag)
+
+    new_salt = os.urandom(16)
+    iterations = 50000 if level == 'low' else 100000 if level == 'medium' else 200000
+    key_len = 32
+    new_key = derive_key(new_password, new_salt, iterations, key_len)
+
+    h = crypto_hmac.HMAC(new_key, hashes.SHA256())
+    h.update(data)
+    new_tag = h.finalize()
+
+    with open(file_path, 'wb') as f:
+        f.write(data + new_tag)
+
+    meta.update({
+        'salt': base64.b64encode(new_salt).decode(),
+        'iterations': iterations,
+        'key_length': key_len
+    })
+    with open(file_path + '.meta', 'w') as f:
+        json.dump(meta, f)
+
+# Main menu
+def main():
+    print("File Encryption Application\n")
+    print("What would you like to do?")
+    print("1. Encrypt a file")
+    print("2. Decrypt a file")
+    print("3. Change file password")
+    choice = input("\nSelect 1, 2 or 3: ")
+
+    if choice == "1":
+        file_path = input("\nEnter the filename (e.g. test.txt): ")
+        password = input("Enter your password: ")
+
+        print("\nSecurity Goal:")
+        print("1. Encryption and Integrity (AES-GCM)")
+        print("2. Integrity only (HMAC)")
+        goal = input("\nChoose 1 or 2: ")
+
+        if goal not in ["1", "2"]:
+            print("Invalid choice.")
+            return
+
+        print("\nSecurity Level:")
+        print("1. Low (AES-128 / 50,000 iterations)")
+        print("2. Medium (AES-256 / 100,000 iterations)")
+        print("3. High (AES-256 / 200,000 iterations)")
+        level_input = input("Choose 1, 2 or 3: ")
+        level = "low" if level_input == "1" else "medium" if level_input == "2" else "high"
+
+        if goal == "1":
+            print("\nKey Rotation:")
+            print("1. On every access")
+            print("2. None")
+            rot_input = input("Choose 1 or 2: ")
+            rotate = "yes" if rot_input == "1" else "no"
+        else:
+            rotate = "no"
+
+        print("\nFinal Confirmation:")
+        print(f"- File: {file_path}")
+        print(f"- Mode: Encryption")
+        print(f"- Goal: {'AEAD (AES-GCM)' if goal == '1' else 'HMAC only'}")
+        print(f"- Security level: {level}")
+        if goal == "1":
+            print(f"- Key Rotation: {'YES' if rotate == 'yes' else 'NO'}")
+
+        confirm = input("\nContinue? (yes/no): ")
+        if confirm.lower() != "yes":
+            print("\nCancelled.")
+            return
+
+        if goal == "1":
+            encrypt_aead(file_path, password, level, rotate)
+        else:
+            encrypt_hmac(file_path, password, level)
+
+    elif choice == "2":
+        file_path = input("Enter the filename to decrypt (e.g. test.txt.enc): ")
+        password = input("Enter your password: ")
+
+        with open(file_path + '.meta', 'r') as f:
+            meta = json.load(f)
+        mode = meta.get('mode')
+
+        if mode == 'AEAD':
+            decrypt_aead(file_path, password)
+        elif mode == 'HMAC':
+            verify_hmac(file_path, password)
+        else:
+            print("\nUnknown protection mode in metadata.")
+
+    elif choice == "3":
+        file_path = input("Enter the filename (e.g. test.txt.enc): ")
+        old_password = input("Enter old password: ")
+        new_password = input("Enter new password: ")
+
+        with open(file_path + ".meta", "r") as f:
+             meta = json.load(f)
+
+        mode = meta.get('mode')
+        level_input = input("\nNew Security Level (1: Low, 2: Medium, 3: High): ")
+        level = "low" if level_input == "1" else "medium" if level_input == "2" else "high"
+
+        if mode == "AEAD":
+            try:
+                 decrypt_aead_for_reencrypt(file_path, old_password, new_password, level, meta.get("rotate_on_access", "no"))
+                 print("Password changed successfully.")
+            except Exception:
+                 print("Failed to change password (incorrect old password)")
+        elif mode == "HMAC":
+            try:
+                 change_password_hmac(file_path, old_password, new_password, level)
+                 print("Password changed successfully.")
+            except Exception:
+                 print("Failed to change password (incorrect old password)")
+
+    else:
+         print("\nInvalid choice.")
+
+if __name__ == '__main__':
+    main()
