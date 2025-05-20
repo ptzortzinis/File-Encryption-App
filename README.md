@@ -22,7 +22,4 @@ Passwords can be changed securely without exposing the original data. The file i
 Requirements
 Python 3.6 or newer is required. Install the cryptography library with:
 
-bash
-Copy
-Edit
 pip install cryptography  
